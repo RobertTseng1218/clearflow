@@ -1,24 +1,51 @@
-@"
+# =========================
+# ClearFlow .gitignore
+# =========================
+
 # Python
 .venv/
+**/.venv/
 __pycache__/
+**/__pycache__/
 *.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+coverage/
+htmlcov/
 
-# Node / Next
+# Node / Next.js
 node_modules/
+**/node_modules/
 .next/
+**/.next/
 dist/
 build/
+*.tsbuildinfo
 
-# Env
+# Environment / secrets
 .env
 .env.*
+!.env.example
+
+# Local database / runtime data
+*.db
+*.sqlite
+*.sqlite3
+apps/api/clearflow.db
+
+# Logs
+*.log
+logs/
 
 # OS / Editor
 .DS_Store
 Thumbs.db
 .vscode/
+.idea/
 
-# Logs
-*.log
-"@ | Set-Content .gitignore
+# Misc
+*.tmp
+*.temp
