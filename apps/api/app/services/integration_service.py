@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from hashlib import sha256
+from html import unescape
+import json
+import re
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -21,6 +24,20 @@ CONNECTOR_REGISTRY = {
     "gcal": GoogleCalendarConnector,
 }
 
+VOLATILE_META_KEYS = {
+    "etag",
+    "historyId",
+    "history_id",
+    "internalDate",
+    "internal_date",
+    "lastFetchedAt",
+    "last_fetched_at",
+    "syncCursor",
+    "sync_cursor",
+    # Gmail 標籤常常只是已讀/未讀或系統分類變化，不應被視為內容更新
+    "label_ids",
+}
+
 
 @dataclass
 class IntegrationSyncResult:
@@ -30,6 +47,8 @@ class IntegrationSyncResult:
     saved_count: int
     created_count: int
     updated_count: int
+    fetched_count: int
+    unchanged_count: int
     synced_at: object
     message: str
 
@@ -122,8 +141,102 @@ def upsert_integration(
     return integration
 
 
+def _normalize_text_for_hash(value: str | None) -> str:
+    text = unescape(value or "")
+    text = re.sub(r"(?i)<br\s*/?>", "\n", text)
+    text = re.sub(r"(?i)</(p|div|li|tr|h\d|ul|ol)>", "\n", text)
+    text = re.sub(r"(?i)<li[^>]*>", "• ", text)
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = text.replace("&nbsp;", " ")
+    return " ".join(text.split())
+
+
+def _normalize_dt_for_hash(value: datetime | None) -> str:
+    if value is None:
+        return ""
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    else:
+        value = value.astimezone(timezone.utc)
+    return value.isoformat()
+
+
+def _normalize_participants_for_hash(participants) -> str:
+    if not participants:
+        return ""
+
+    normalized: list[str] = []
+    for participant in participants:
+        if isinstance(participant, dict):
+            normalized.append(
+                json.dumps(
+                    {
+                        "email": _normalize_text_for_hash(str(participant.get("email") or "")).lower(),
+                        "name": _normalize_text_for_hash(str(participant.get("name") or "")),
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
+            )
+        else:
+            normalized.append(_normalize_text_for_hash(str(participant)).lower())
+
+    normalized.sort()
+    return "|".join(normalized)
+
+
+def _normalize_json_value(value):
+    if isinstance(value, dict):
+        return {
+            key: _normalize_json_value(value[key])
+            for key in sorted(value.keys())
+            if value[key] not in (None, "", [], {})
+        }
+    if isinstance(value, list):
+        normalized_list = [_normalize_json_value(item) for item in value]
+        try:
+            return sorted(normalized_list, key=lambda item: json.dumps(item, ensure_ascii=False, sort_keys=True, default=str))
+        except TypeError:
+            return normalized_list
+    return value
+
+
+def _normalize_meta_for_hash(source_meta) -> str:
+    if not isinstance(source_meta, dict):
+        return ""
+
+    cleaned: dict[str, object] = {}
+    for key, value in source_meta.items():
+        if key in VOLATILE_META_KEYS:
+            continue
+        if value in (None, "", [], {}):
+            continue
+        cleaned[key] = _normalize_json_value(value)
+
+    if not cleaned:
+        return ""
+
+    return json.dumps(cleaned, ensure_ascii=False, sort_keys=True, default=str)
+
+
 def _to_source_item_hash(record: SourceRecord) -> str:
-    raw = f"{record.source_type}|{record.external_id}|{record.title}|{record.content_text}"
+    normalized_title = _normalize_text_for_hash(record.title)
+    normalized_content = _normalize_text_for_hash(record.content_text)
+    normalized_dt = _normalize_dt_for_hash(record.source_timestamp)
+    normalized_participants = _normalize_participants_for_hash(record.participants)
+    normalized_meta = _normalize_meta_for_hash(record.source_meta)
+
+    raw = "|".join(
+        [
+            record.source_type or "",
+            record.external_id or "",
+            normalized_title,
+            normalized_content,
+            normalized_dt if record.source_type == "calendar_event" else "",
+            normalized_participants if record.source_type == "calendar_event" else "",
+            normalized_meta,
+        ]
+    )
     return sha256(raw.encode("utf-8")).hexdigest()
 
 
@@ -152,6 +265,33 @@ def _refresh_integration_access_token(db: Session, integration: Integration, con
     db.add(integration)
     db.commit()
     db.refresh(integration)
+
+
+def _build_sync_message(
+    provider_name: str,
+    *,
+    fetched_count: int,
+    created_count: int,
+    updated_count: int,
+    unchanged_count: int,
+) -> tuple[str, str]:
+    changed_count = created_count + updated_count
+
+    if fetched_count == 0:
+        return "no_change", f"{provider_name} 已完成同步，本次沒有抓到可更新的資料。"
+
+    if changed_count == 0:
+        return "no_change", f"{provider_name} 已完成同步，本次檢查 {fetched_count} 筆資料，沒有新的重點變化。"
+
+    parts: list[str] = []
+    if created_count > 0:
+        parts.append(f"新增 {created_count}")
+    if updated_count > 0:
+        parts.append(f"更新 {updated_count}")
+    if unchanged_count > 0:
+        parts.append(f"略過 {unchanged_count}")
+
+    return "success", f"{provider_name} 同步完成，本次檢查 {fetched_count} 筆資料，" + "、".join(parts) + "。"
 
 
 def sync_integration(db: Session, integration: Integration) -> IntegrationSyncResult:
@@ -198,13 +338,17 @@ def sync_integration(db: Session, integration: Integration) -> IntegrationSyncRe
             sync_cursor=integration.sync_cursor,
         )
 
+    fetched_count = len(records)
     created_count = 0
     updated_count = 0
-    changed_count = 0
+    unchanged_count = 0
 
     for record in records:
         existing = db.scalar(
-            select(SourceItem).where(SourceItem.integration_id == integration.id, SourceItem.external_id == record.external_id)
+            select(SourceItem).where(
+                SourceItem.integration_id == integration.id,
+                SourceItem.external_id == record.external_id,
+            )
         )
 
         next_hash = _to_source_item_hash(record)
@@ -215,13 +359,20 @@ def sync_integration(db: Session, integration: Integration) -> IntegrationSyncRe
                 integration_id=integration.id,
                 source_type=record.source_type,
                 external_id=record.external_id,
+                title=record.title,
+                content_text=record.content_text,
+                source_timestamp=record.source_timestamp,
+                participants_json=record.participants,
+                source_meta_json=record.source_meta,
+                hash_signature=next_hash,
             )
             db.add(existing)
             created_count += 1
-            changed_count += 1
-        elif existing.hash_signature != next_hash:
-            updated_count += 1
-            changed_count += 1
+            continue
+
+        if existing.hash_signature == next_hash:
+            unchanged_count += 1
+            continue
 
         existing.title = record.title
         existing.content_text = record.content_text
@@ -229,16 +380,19 @@ def sync_integration(db: Session, integration: Integration) -> IntegrationSyncRe
         existing.participants_json = record.participants
         existing.source_meta_json = record.source_meta
         existing.hash_signature = next_hash
+        updated_count += 1
 
+    changed_count = created_count + updated_count
     synced_at = utcnow()
     integration.sync_cursor = next_cursor
     integration.last_synced_at = synced_at
 
-    sync_status = "success" if changed_count > 0 else "no_change"
-    message = (
-        f"{provider_name} 同步完成，已更新 {changed_count} 筆資料。"
-        if changed_count > 0
-        else f"{provider_name} 已完成同步，目前沒有新的重點變化。"
+    sync_status, message = _build_sync_message(
+        provider_name,
+        fetched_count=fetched_count,
+        created_count=created_count,
+        updated_count=updated_count,
+        unchanged_count=unchanged_count,
     )
 
     integration.meta_json = {
@@ -247,6 +401,8 @@ def sync_integration(db: Session, integration: Integration) -> IntegrationSyncRe
         "last_sync_saved_count": changed_count,
         "last_sync_created_count": created_count,
         "last_sync_updated_count": updated_count,
+        "last_sync_fetched_count": fetched_count,
+        "last_sync_unchanged_count": unchanged_count,
         "last_sync_message": message,
     }
 
@@ -264,9 +420,11 @@ def sync_integration(db: Session, integration: Integration) -> IntegrationSyncRe
         related_entity_type="integration",
         related_entity_id=integration.id,
         meta_json={
+            "fetched_count": fetched_count,
             "saved_count": changed_count,
             "created_count": created_count,
             "updated_count": updated_count,
+            "unchanged_count": unchanged_count,
             "sync_status": sync_status,
         },
     )
@@ -279,6 +437,8 @@ def sync_integration(db: Session, integration: Integration) -> IntegrationSyncRe
         saved_count=changed_count,
         created_count=created_count,
         updated_count=updated_count,
+        fetched_count=fetched_count,
+        unchanged_count=unchanged_count,
         synced_at=synced_at,
         message=message,
     )

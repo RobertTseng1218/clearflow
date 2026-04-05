@@ -39,11 +39,6 @@ function fmtDate(value: string) {
   }).format(d);
 }
 
-function summaryTypeLabel(summaryType?: string | null) {
-  if (summaryType === 'daily') return '每日摘要';
-  return summaryType || '未分類摘要';
-}
-
 function truncateText(value?: string | null, limit = 130) {
   const text = (value || '').replace(/\s+/g, ' ').trim();
   return text.length > limit ? `${text.slice(0, limit - 1).trimEnd()}…` : text || '—';
@@ -86,9 +81,17 @@ function breakdownText(sourceBreakdown?: Record<string, number>) {
 
   const parts: string[] = [];
   if (sourceBreakdown.email) parts.push(`Gmail ${sourceBreakdown.email}`);
-  if (sourceBreakdown.calendar_event) parts.push(`Google Calendar ${sourceBreakdown.calendar_event}`);
+  if (sourceBreakdown.calendar_event) parts.push(`Calendar ${sourceBreakdown.calendar_event}`);
 
   return parts.length ? parts.join('｜') : null;
+}
+
+function filteredItemsPreview(items?: Array<any>) {
+  if (!items || items.length === 0) return null;
+  return items
+    .slice(0, 4)
+    .map((item) => `${item.display_label || '已壓低'}：${item.title}`)
+    .join('｜');
 }
 
 function signalBreakdownText(signalBreakdown?: Record<string, number>) {
@@ -158,7 +161,7 @@ export default function SummariesPage() {
   };
 
   useEffect(() => {
-    void load();
+    load();
   }, []);
 
   useEffect(() => {
@@ -187,7 +190,7 @@ export default function SummariesPage() {
       }
     };
 
-    void run();
+    run();
 
     return () => {
       cancelled = true;
@@ -233,7 +236,7 @@ export default function SummariesPage() {
           message={error}
           action={
             <button
-              onClick={() => void load()}
+              onClick={load}
               className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
             >
               重新載入
@@ -271,11 +274,13 @@ export default function SummariesPage() {
                           <div className="text-sm font-semibold text-slate-900">
                             {fmtDate(summary.summary_date)}
                           </div>
-                          <div className="mt-1 text-xs font-medium text-slate-500">
-                            {summary.summary_type_display || summaryTypeLabel(summary.summary_type)}
+                          <div className="mt-1 text-xs uppercase tracking-wide text-slate-500">
+                            {summary.summary_type}
                           </div>
                         </div>
-                        <span className="text-xs font-medium text-brand-600">查看詳情</span>
+                        <span className="text-xs font-medium text-brand-600">
+                          查看詳情
+                        </span>
                       </div>
 
                       <p className="mt-3 text-sm text-slate-600">
@@ -306,14 +311,14 @@ export default function SummariesPage() {
                 <div className="space-y-6">
                   <div className="rounded-xl border border-slate-200 p-4">
                     <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div className="text-xs font-semibold tracking-wide text-slate-400">
-                        {detail.summary_type_display || summaryTypeLabel(detail.summary_type)}
+                      <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                        今日整理
                       </div>
 
                       <div className="flex flex-wrap items-center gap-2">
                         {breakdownText(detail.source_breakdown) ? (
                           <div className="text-xs font-medium text-slate-500">
-                            納入來源：{breakdownText(detail.source_breakdown)}
+                            {breakdownText(detail.source_breakdown)}
                           </div>
                         ) : null}
 
@@ -328,22 +333,30 @@ export default function SummariesPage() {
                     <p className="mt-2 text-sm leading-7 text-slate-700">
                       {detail.summary_text || '—'}
                     </p>
+
+                    {filteredItemsPreview(detail.filtered_items) ? (
+                      <div className="mt-3 rounded-xl border border-dashed border-slate-200 bg-slate-50 px-3 py-3 text-xs leading-6 text-slate-500">
+                        <div className="font-semibold text-slate-600">已壓低內容</div>
+                        <div className="mt-1">{filteredItemsPreview(detail.filtered_items)}</div>
+                      </div>
+                    ) : null}
                   </div>
 
                   <div className="grid gap-6 xl:grid-cols-2">
                     <SectionCard title="郵件重點">
                       <div className="space-y-3">
                         {groupedItems.emailItems.length === 0 ? (
-                          <div className="text-sm text-slate-500">今天沒有需要優先處理的郵件重點。</div>
+                          <div className="text-sm text-slate-500">
+                            今天沒有需要優先處理的郵件重點。
+                          </div>
                         ) : (
                           groupedItems.emailItems.map((item: any) => (
                             <div key={item.id} className="rounded-xl border border-slate-200 p-4">
                               <div className="flex flex-wrap items-center gap-2">
-                                <h3 className="font-semibold text-slate-900">{item.title}</h3>
-                                {sourceBadge(
-                                  item.source_type || item.meta?.source_type,
-                                  item.source_label || item.meta?.source_label
-                                )}
+                                <h3 className="font-semibold text-slate-900">
+                                  {item.title}
+                                </h3>
+                                {sourceBadge(item.source_type || item.meta?.source_type, item.source_label || item.meta?.source_label)}
                                 {displayBadge(item.display_label || item.meta?.display_label)}
                               </div>
 
@@ -359,16 +372,17 @@ export default function SummariesPage() {
                     <SectionCard title="行程 / 會議重點">
                       <div className="space-y-3">
                         {groupedItems.eventItems.length === 0 ? (
-                          <div className="text-sm text-slate-500">今天沒有需要特別留意的未來行程。</div>
+                          <div className="text-sm text-slate-500">
+                            今天沒有需要特別留意的未來行程。
+                          </div>
                         ) : (
                           groupedItems.eventItems.map((item: any) => (
                             <div key={item.id} className="rounded-xl border border-slate-200 p-4">
                               <div className="flex flex-wrap items-center gap-2">
-                                <h3 className="font-semibold text-slate-900">{item.title}</h3>
-                                {sourceBadge(
-                                  item.source_type || item.meta?.source_type,
-                                  item.source_label || item.meta?.source_label
-                                )}
+                                <h3 className="font-semibold text-slate-900">
+                                  {item.title}
+                                </h3>
+                                {sourceBadge(item.source_type || item.meta?.source_type, item.source_label || item.meta?.source_label)}
                                 {displayBadge(item.display_label || item.meta?.display_label)}
                               </div>
 
@@ -383,7 +397,10 @@ export default function SummariesPage() {
                   </div>
                 </div>
               ) : (
-                <EmptyState title="尚未選擇摘要" description="請先從左側選擇一筆摘要。" />
+                <EmptyState
+                  title="尚未選擇摘要"
+                  description="請先從左側選擇一筆摘要。"
+                />
               )}
             </SectionCard>
           </div>

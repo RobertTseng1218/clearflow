@@ -63,7 +63,7 @@ def list_summaries(
     current_user: User = Depends(get_current_user),
 ) -> dict:
     if type == "daily" and _get_existing_today_summary(db, current_user.id, type) is None:
-        generate_daily_summary(db, current_user.id, log_activity=False)
+        generate_daily_summary(db, current_user.id)
 
     usage = get_usage_payload(db, current_user.id)
     threshold = _history_threshold(usage["history_days_limit"])
@@ -93,6 +93,8 @@ def list_summaries(
                     "created_at": item.created_at.isoformat(),
                     "source_breakdown": (item.meta_json or {}).get("source_breakdown", {}),
                     "signal_breakdown": (item.meta_json or {}).get("signal_breakdown", {}),
+                    "filtered_counts": (item.meta_json or {}).get("filtered_counts", {}),
+                    "filtered_items": (item.meta_json or {}).get("filtered_items", []),
                 }
                 for item in items
             ],
@@ -137,6 +139,8 @@ def get_summary(
             "summary_text": summary.summary_text,
             "source_breakdown": (summary.meta_json or {}).get("source_breakdown", {}),
             "signal_breakdown": (summary.meta_json or {}).get("signal_breakdown", {}),
+            "filtered_counts": (summary.meta_json or {}).get("filtered_counts", {}),
+            "filtered_items": (summary.meta_json or {}).get("filtered_items", []),
             "items": [
                 {
                     "id": item.id,

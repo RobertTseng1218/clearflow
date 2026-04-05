@@ -45,6 +45,8 @@ def list_integrations(db: Session = Depends(get_db), current_user: User = Depend
                     "last_sync_saved_count": (item.meta_json or {}).get("last_sync_saved_count"),
                     "last_sync_created_count": (item.meta_json or {}).get("last_sync_created_count"),
                     "last_sync_updated_count": (item.meta_json or {}).get("last_sync_updated_count"),
+                    "last_sync_fetched_count": (item.meta_json or {}).get("last_sync_fetched_count"),
+                    "last_sync_unchanged_count": (item.meta_json or {}).get("last_sync_unchanged_count"),
                     "last_sync_message": (item.meta_json or {}).get("last_sync_message"),
                     "meta": item.meta_json,
                 }
@@ -153,6 +155,8 @@ def manual_sync(integration_id: str, db: Session = Depends(get_db), current_user
             "saved_count": result.saved_count,
             "created_count": result.created_count,
             "updated_count": result.updated_count,
+            "fetched_count": result.fetched_count,
+            "unchanged_count": result.unchanged_count,
             "synced_at": _serialize_dt(result.synced_at),
             "message": result.message,
         }

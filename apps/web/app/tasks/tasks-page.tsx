@@ -32,6 +32,71 @@ const LOW_SIGNAL_NOTIFICATION_KEYWORDS = [
 
 const DISPLAY_TIME_ZONE = 'Asia/Taipei';
 
+
+const DATA_UPDATED_EVENT = 'clearflow:data-updated';
+const DATA_UPDATED_STORAGE_KEY = 'clearflow:lastSyncSignal';
+
+type DataUpdatedDetail = {
+  reason?: 'sync' | 'task' | 'manual' | string;
+  message?: string;
+  value?: string;
+  [key: string]: unknown;
+};
+
+function subscribeDataUpdated(listener: (detail?: DataUpdatedDetail) => void) {
+  if (typeof window === 'undefined') {
+    return () => {};
+  }
+
+  if (typeof bindDataUpdated === 'function') {
+    try {
+      return bindDataUpdated(listener as any);
+    } catch {
+      // fall through to local fallback
+    }
+  }
+
+  const handleCustom = (event: Event) => {
+    const customEvent = event as CustomEvent<DataUpdatedDetail | undefined>;
+    listener(customEvent.detail);
+  };
+
+  const handleStorage = (event: StorageEvent) => {
+    if (event.key !== DATA_UPDATED_STORAGE_KEY) return;
+    listener({ reason: 'sync', value: event.newValue ?? undefined });
+  };
+
+  window.addEventListener(DATA_UPDATED_EVENT, handleCustom as EventListener);
+  window.addEventListener('storage', handleStorage);
+
+  return () => {
+    window.removeEventListener(DATA_UPDATED_EVENT, handleCustom as EventListener);
+    window.removeEventListener('storage', handleStorage);
+  };
+}
+
+function publishDataUpdated(detail?: DataUpdatedDetail) {
+  if (typeof notifyDataUpdated === 'function') {
+    try {
+      notifyDataUpdated(detail as any);
+      return;
+    } catch {
+      // fall through to local fallback
+    }
+  }
+
+  if (typeof window === 'undefined') return;
+
+  const payload = detail || {};
+  try {
+    window.localStorage.setItem(DATA_UPDATED_STORAGE_KEY, String(Date.now()));
+  } catch {
+    // ignore localStorage availability issues
+  }
+
+  window.dispatchEvent(new CustomEvent<DataUpdatedDetail>(DATA_UPDATED_EVENT, { detail: payload }));
+}
+
 type TaskViewFilter = 'active' | 'snoozed' | 'done' | 'archived' | 'all';
 
 function fmtDateTime(value?: string | null) {
@@ -250,14 +315,14 @@ export default function TasksPage() {
   }, []);
 
   useEffect(() => {
-    const unbind = bindDataUpdated((detail) => {
+    const unbind = subscribeDataUpdated((detail) => {
       void load({ silent: true, reason: detail?.reason === 'task' ? 'task' : 'sync' });
     });
 
     return () => {
       unbind();
     };
-  }, [tasks.length]);
+  }, []);
 
   useEffect(() => {
     if (!refreshNotice) return undefined;
@@ -316,7 +381,7 @@ export default function TasksPage() {
         prev.map((item) => (item.id === task.id ? { ...item, ...nextTask } : item))
       );
       setRefreshNotice(message);
-      notifyDataUpdated({ reason: 'task', message });
+      publishDataUpdated({ reason: 'task', message });
     } catch (err) {
       setError(err instanceof Error ? err.message : '更新待辦失敗');
     } finally {

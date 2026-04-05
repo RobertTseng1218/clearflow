@@ -33,53 +33,6 @@ ACTION_KEYWORDS = [
     "approve",
 ]
 
-EMAIL_URGENT_ACTION_KEYWORDS = [
-    "請回覆",
-    "請確認",
-    "請補件",
-    "請處理",
-    "請完成",
-    "請盡快",
-    "請提供",
-    "urgent",
-    "asap",
-    "reply required",
-    "action required",
-    "approval required",
-    "verify",
-]
-
-EMAIL_FOLLOWUP_KEYWORDS = [
-    "回覆",
-    "確認",
-    "安排",
-    "評估",
-    "跟進",
-    "請查看",
-    "請留意",
-    "follow up",
-    "follow-up",
-    "review",
-]
-
-EMAIL_TIME_PRESSURE_KEYWORDS = [
-    "今天",
-    "今日",
-    "今天內",
-    "今日內",
-    "今天前",
-    "下午",
-    "晚上",
-    "上午",
-    "中午",
-    "before today",
-    "due today",
-    "deadline",
-    "截止",
-    "最後期限",
-    "今晚",
-]
-
 PROMOTIONAL_KEYWORDS = [
     "折扣",
     "優惠",
@@ -148,18 +101,6 @@ CALENDAR_MEETING_KEYWORDS = [
     "review",
     "demo",
     "訪談",
-]
-
-CALENDAR_PARTICIPATION_KEYWORDS = [
-    "請準時參加",
-    "準時參加",
-    "需出席",
-    "請出席",
-    "需準備",
-    "請準備",
-    "需確認",
-    "請確認",
-    "參加",
 ]
 
 CALENDAR_LOOKAHEAD_DAYS = 7
@@ -257,67 +198,32 @@ def _is_true_actionable_email(source_item: SourceItem) -> bool:
     return True
 
 
-def _email_has_urgent_action(source_item: SourceItem) -> bool:
-    return _contains_any(_email_text(source_item), EMAIL_URGENT_ACTION_KEYWORDS)
-
-
-def _email_has_time_pressure(source_item: SourceItem) -> bool:
-    return _contains_any(_email_text(source_item), EMAIL_TIME_PRESSURE_KEYWORDS)
-
-
-def _email_requires_follow_up(source_item: SourceItem) -> bool:
-    text = _email_text(source_item)
-    if _email_has_urgent_action(source_item) or _email_has_time_pressure(source_item):
-        return True
-    return _contains_any(text, EMAIL_FOLLOWUP_KEYWORDS)
-
-
-def _calendar_is_important(source_item: SourceItem) -> bool:
-    text = f"{source_item.title or ''} {source_item.content_text or ''}".lower()
-    return any(keyword in text for keyword in CALENDAR_MEETING_KEYWORDS)
-
-
-def _calendar_requires_participation(source_item: SourceItem) -> bool:
-    text = f"{source_item.title or ''} {source_item.content_text or ''}".lower()
-    return any(keyword.lower() in text for keyword in CALENDAR_PARTICIPATION_KEYWORDS)
-
-
 def _guess_priority(source_item: SourceItem) -> str:
     now = datetime.now(timezone.utc)
     source_dt = _normalize_dt(source_item.source_timestamp) or now
 
     if source_item.source_type == "calendar_event":
+        title_text = f"{source_item.title or ''} {source_item.content_text or ''}".lower()
+
         if source_dt < now:
             return "low"
-
-        important = _calendar_is_important(source_item)
-        requires_participation = _calendar_requires_participation(source_item)
 
         if source_dt <= now + timedelta(hours=6):
             return "high"
 
-        if source_dt.date() == now.date() and (important or requires_participation):
-            return "high"
+        if any(keyword in title_text for keyword in CALENDAR_MEETING_KEYWORDS):
+            return "high" if source_dt <= now + timedelta(days=1) else "medium"
 
-        if source_dt <= now + timedelta(hours=24):
-            return "medium"
+        return "medium" if source_dt <= now + timedelta(days=1) else "low"
 
-        if source_dt <= now + timedelta(hours=48) and important:
-            return "medium"
-
-        return "low"
+    if _is_true_actionable_email(source_item):
+        return "high"
 
     signal = classify_email_signal(source_item)
     if signal in {"notification", "marketing", "reference"}:
         return "low"
 
-    if _email_has_time_pressure(source_item) or _email_has_urgent_action(source_item):
-        return "high"
-
-    if _is_true_actionable_email(source_item) or _email_requires_follow_up(source_item):
-        return "medium"
-
-    return "low"
+    return "medium"
 
 
 def _guess_due_at(source_item: SourceItem):
@@ -326,14 +232,8 @@ def _guess_due_at(source_item: SourceItem):
     if source_item.source_type == "calendar_event":
         return base
 
-    if _email_has_time_pressure(source_item):
-        return base + timedelta(hours=4)
-
-    if _email_has_urgent_action(source_item):
+    if _is_true_actionable_email(source_item):
         return base + timedelta(hours=8)
-
-    if _is_true_actionable_email(source_item) or _email_requires_follow_up(source_item):
-        return base + timedelta(hours=24)
 
     return None
 
@@ -448,6 +348,18 @@ def extract_tasks_for_user(db: Session, user_id: str) -> list[Task]:
         task.task_hash: task for task in existing_tasks if task.task_hash
     }
 
+    existing_task_ids = [task.id for task in existing_tasks if task.id]
+    existing_links: set[tuple[str, str]] = set()
+    if existing_task_ids:
+        existing_links = {
+            (task_id, source_item_id)
+            for task_id, source_item_id in db.execute(
+                select(TaskSource.task_id, TaskSource.source_item_id).where(
+                    TaskSource.task_id.in_(existing_task_ids)
+                )
+            )
+        }
+
     touched_ids: set[str] = set()
     created_or_updated: list[Task] = []
 
@@ -512,13 +424,8 @@ def extract_tasks_for_user(db: Session, user_id: str) -> list[Task]:
         touched_ids.add(task.id)
         created_or_updated.append(task)
 
-        pair = db.scalar(
-            select(TaskSource).where(
-                TaskSource.task_id == task.id,
-                TaskSource.source_item_id == source_item.id,
-            )
-        )
-        if pair is None:
+        link_key = (task.id, source_item.id)
+        if link_key not in existing_links:
             db.add(
                 TaskSource(
                     task_id=task.id,
@@ -526,6 +433,7 @@ def extract_tasks_for_user(db: Session, user_id: str) -> list[Task]:
                     relation_type="derived_from",
                 )
             )
+            existing_links.add(link_key)
 
     stale_tasks = [
         task

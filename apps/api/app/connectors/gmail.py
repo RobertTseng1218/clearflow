@@ -15,6 +15,7 @@ class GmailConnector(GoogleBaseConnector):
         "https://www.googleapis.com/auth/gmail.readonly",
     ]
     gmail_api_base = "https://gmail.googleapis.com/gmail/v1/users/me"
+    sync_fetch_limit = 10
 
     def _fake_records(self) -> list[SourceRecord]:
         now = utcnow()
@@ -30,15 +31,21 @@ class GmailConnector(GoogleBaseConnector):
             )
         ]
 
-    def _fetch_real_source_records(self, access_token: str, sync_cursor: str | None = None) -> tuple[list[SourceRecord], str | None]:
+    def _fetch_real_source_records(
+        self,
+        access_token: str,
+        sync_cursor: str | None = None,
+    ) -> tuple[list[SourceRecord], str | None]:
         headers = {"Authorization": f"Bearer {access_token}"}
+
+        # MVP 先採「最新快照同步」：
+        # 每次只抓最新 inbox 郵件，不把 Gmail pageToken 當成長期 sync cursor，
+        # 避免每按一次同步就繼續翻到更舊頁，造成看起來永遠都在更新。
         params = {
-            "maxResults": 10,
+            "maxResults": self.sync_fetch_limit,
             "labelIds": "INBOX",
             "q": "newer_than:30d",
         }
-        if sync_cursor:
-            params["pageToken"] = sync_cursor
 
         with httpx.Client(timeout=self.timeout_seconds) as client:
             response = client.get(f"{self.gmail_api_base}/messages", headers=headers, params=params)
@@ -49,7 +56,6 @@ class GmailConnector(GoogleBaseConnector):
 
         payload = response.json()
         messages = payload.get("messages", [])
-        next_cursor = payload.get("nextPageToken")
         records: list[SourceRecord] = []
 
         with httpx.Client(timeout=self.timeout_seconds) as client:
@@ -57,6 +63,7 @@ class GmailConnector(GoogleBaseConnector):
                 message_id = message.get("id")
                 if not message_id:
                     continue
+
                 detail_resp = client.get(
                     f"{self.gmail_api_base}/messages/{message_id}",
                     headers=headers,
@@ -66,6 +73,7 @@ class GmailConnector(GoogleBaseConnector):
                     detail_resp.raise_for_status()
                 except httpx.HTTPStatusError:
                     continue
+
                 detail = detail_resp.json()
                 headers_map = {
                     item.get("name", "").lower(): item.get("value", "")
@@ -75,6 +83,7 @@ class GmailConnector(GoogleBaseConnector):
                 sender = headers_map.get("from")
                 to = headers_map.get("to")
                 participants = self._parse_participants(sender, to)
+
                 records.append(
                     SourceRecord(
                         external_id=message_id,
@@ -85,11 +94,13 @@ class GmailConnector(GoogleBaseConnector):
                         participants=participants,
                         source_meta={
                             "thread_id": detail.get("threadId"),
-                            "label_ids": detail.get("labelIds", []),
+                            # 排序後再寫入，避免 Gmail label 回傳順序不同造成誤判更新
+                            "label_ids": sorted(detail.get("labelIds", [])),
                             "from": sender,
                             "to": to,
                         },
                     )
                 )
 
-        return records, next_cursor
+        # 不把 Gmail nextPageToken 當成 sync cursor 保存
+        return records, None

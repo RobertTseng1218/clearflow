@@ -109,6 +109,8 @@ CALENDAR_MEETING_KEYWORDS = [
     "kickoff",
 ]
 
+FILTERED_ITEM_PREVIEW_LIMIT = 5
+
 
 def _normalize_dt(value: datetime | None) -> datetime | None:
     if value is None:
@@ -144,6 +146,52 @@ def _contains_any(text: str, keywords: list[str]) -> bool:
     return any(keyword.lower() in text for keyword in keywords)
 
 
+def _source_meta(source_item: SourceItem) -> dict:
+    meta = getattr(source_item, "source_meta_json", None)
+    return meta if isinstance(meta, dict) else {}
+
+
+def _email_thread_id(source_item: SourceItem) -> str | None:
+    if source_item.source_type != "email":
+        return None
+    thread_id = _source_meta(source_item).get("thread_id")
+    if isinstance(thread_id, str) and thread_id.strip():
+        return thread_id.strip()
+    return None
+
+
+def _email_fallback_key(source_item: SourceItem) -> str:
+    title = _clean_text(source_item.title).lower()
+    preview = _clean_text(source_item.content_text).lower()[:160]
+    return f"{title}|{preview}"
+
+
+def _source_item_identity(source_item: SourceItem) -> str:
+    if source_item.source_type == "email":
+        thread_id = _email_thread_id(source_item)
+        if thread_id:
+            return f"email:thread:{thread_id}"
+        return f"email:fallback:{_email_fallback_key(source_item)}"
+
+    if source_item.source_type == "calendar_event":
+        source_dt = _normalize_dt(source_item.source_timestamp)
+        return f"calendar_event:{_clean_text(source_item.title).lower()}|{source_dt.isoformat() if source_dt else ''}"
+
+    return f"{source_item.source_type}:{getattr(source_item, 'id', '')}"
+
+
+def _dedupe_source_items(items: Iterable[SourceItem]) -> list[SourceItem]:
+    deduped: list[SourceItem] = []
+    seen: set[str] = set()
+    for item in items:
+        identity = _source_item_identity(item)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        deduped.append(item)
+    return deduped
+
+
 def classify_email_signal(source_item: SourceItem) -> str:
     title_text = _clean_text(source_item.title).lower()
     preview_text = _clean_text(source_item.content_text).lower()[:240]
@@ -159,14 +207,12 @@ def classify_email_signal(source_item: SourceItem) -> str:
     title_has_low_signal = _contains_any(title_text, LOW_SIGNAL_NOTIFICATION_KEYWORDS)
     preview_has_low_signal = _contains_any(preview_text, LOW_SIGNAL_NOTIFICATION_KEYWORDS)
 
-    # 標題若已經很明確是通知型，避免信內樣板字樣把它誤判成待辦
     if title_has_low_signal and not title_has_strong_action:
         return "notification"
 
     if title_has_strong_action:
         return "actionable"
 
-    # 內文只有在前段同時出現明確動作 + 截止訊號時才升為 actionable
     if preview_has_strong_action and preview_has_deadline_hint and not title_has_low_signal:
         return "actionable"
 
@@ -238,6 +284,9 @@ def _item_priority(source_item: SourceItem) -> float:
 
 
 def _source_item_to_summary_item(source_item: SourceItem) -> dict:
+    source_identity = _source_item_identity(source_item)
+    thread_id = _email_thread_id(source_item)
+
     if source_item.source_type == "calendar_event":
         item_type = "calendar"
         display_label = _calendar_stage_label(source_item)
@@ -264,7 +313,23 @@ def _source_item_to_summary_item(source_item: SourceItem) -> dict:
             "source_label": _source_label(source_item.source_type),
             "display_label": display_label,
             "source_category": category,
+            "thread_id": thread_id,
+            "dedupe_identity": source_identity,
         },
+    }
+
+
+def _filtered_item_payload(source_item: SourceItem) -> dict:
+    signal = classify_email_signal(source_item)
+    return {
+        "title": source_item.title or "(untitled)",
+        "description": _short_text(source_item.content_text, 120),
+        "source_type": source_item.source_type,
+        "source_label": _source_label(source_item.source_type),
+        "display_label": "通知郵件" if signal == "notification" else "行銷郵件",
+        "source_category": signal,
+        "thread_id": _email_thread_id(source_item),
+        "dedupe_identity": _source_item_identity(source_item),
     }
 
 
@@ -272,8 +337,8 @@ def _build_summary_text(items: Iterable[SourceItem]) -> str:
     items = list(items)
     now = datetime.now(timezone.utc)
 
-    email_items = [item for item in items if item.source_type == "email"]
-    event_items = [item for item in items if item.source_type == "calendar_event"]
+    email_items = _dedupe_source_items(item for item in items if item.source_type == "email")
+    event_items = list(item for item in items if item.source_type == "calendar_event")
 
     actionable_emails = [item for item in email_items if classify_email_signal(item) == "actionable"]
     notification_emails = [item for item in email_items if classify_email_signal(item) == "notification"]
@@ -361,19 +426,23 @@ def generate_daily_summary(
     else:
         db.execute(delete(SummaryItem).where(SummaryItem.summary_id == summary.id))
 
-    email_items = [item for item in items if item.source_type == "email"]
+    deduped_email_items = _dedupe_source_items(
+        item for item in items if item.source_type == "email"
+    )
     calendar_items = [item for item in items if item.source_type == "calendar_event"]
-    actionable_emails = [item for item in email_items if classify_email_signal(item) == "actionable"]
-    notification_emails = [item for item in email_items if classify_email_signal(item) == "notification"]
-    marketing_emails = [item for item in email_items if classify_email_signal(item) == "marketing"]
-    reference_emails = [item for item in email_items if classify_email_signal(item) == "reference"]
 
-    summary.summary_text = _build_summary_text(items)
+    actionable_emails = [item for item in deduped_email_items if classify_email_signal(item) == "actionable"]
+    notification_emails = [item for item in deduped_email_items if classify_email_signal(item) == "notification"]
+    marketing_emails = [item for item in deduped_email_items if classify_email_signal(item) == "marketing"]
+    reference_emails = [item for item in deduped_email_items if classify_email_signal(item) == "reference"]
+    filtered_items = _dedupe_source_items([*notification_emails, *marketing_emails])
+
+    summary.summary_text = _build_summary_text([*calendar_items, *deduped_email_items])
     summary.meta_json = {
         "source_count": len(items),
         "generated_from_types": sorted({item.source_type for item in items}),
         "source_breakdown": {
-            "email": len(email_items),
+            "email": len(items) - len(calendar_items),
             "calendar_event": len(calendar_items),
         },
         "signal_breakdown": {
@@ -382,16 +451,30 @@ def generate_daily_summary(
             "reference_email": len(reference_emails),
             "marketing_email": len(marketing_emails),
         },
+        "filtered_counts": {
+            "notification_email": len(notification_emails),
+            "marketing_email": len(marketing_emails),
+            "suppressed_total": len(filtered_items),
+        },
+        "filtered_items": [
+            _filtered_item_payload(item)
+            for item in sorted(filtered_items, key=_item_priority, reverse=True)[:FILTERED_ITEM_PREVIEW_LIMIT]
+        ],
     }
 
     db.add(summary)
     db.flush()
 
-    top_items = sorted(items, key=_item_priority, reverse=True)
-    selected_items = [item for item in top_items if _should_include_summary_item(item)][:8]
+    top_items = sorted([*calendar_items, *deduped_email_items], key=_item_priority, reverse=True)
+    selected_items = _dedupe_source_items(
+        item for item in top_items if _should_include_summary_item(item)
+    )[:8]
 
     if not selected_items:
-        selected_items = [item for item in top_items if item.source_type != "email" or classify_email_signal(item) != "marketing"][:8]
+        selected_items = _dedupe_source_items(
+            item for item in top_items
+            if item.source_type != "email" or classify_email_signal(item) != "marketing"
+        )[:8]
 
     for source_item in selected_items:
         db.add(

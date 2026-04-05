@@ -83,14 +83,36 @@ function statusBadgeClassName(integration: any) {
   return 'bg-brand-50 text-brand-600';
 }
 
+function buildSyncSummary(integration: any) {
+  const fetched = Number(integration.last_sync_fetched_count || 0);
+  const created = Number(integration.last_sync_created_count || 0);
+  const updated = Number(integration.last_sync_updated_count || 0);
+  const unchanged = Number(integration.last_sync_unchanged_count || 0);
+  const changed = created + updated;
+
+  if (fetched === 0) {
+    return '最近一次同步沒有抓到可更新的資料。';
+  }
+
+  if (changed === 0) {
+    return `最近一次同步檢查 ${fetched} 筆資料，沒有新的重點變化。`;
+  }
+
+  const parts: string[] = [];
+  if (created > 0) parts.push(`新增 ${created}`);
+  if (updated > 0) parts.push(`更新 ${updated}`);
+  if (unchanged > 0) parts.push(`略過 ${unchanged}`);
+
+  return `最近一次同步檢查 ${fetched} 筆資料，${parts.join('、')}。`;
+}
+
 function statusHintText(integration: any) {
   if (integration.last_sync_result === 'success') {
-    const count = Number(integration.last_sync_saved_count || 0);
-    return count > 0 ? `最近一次同步更新 ${count} 筆資料。` : '剛剛已完成同步。';
+    return integration.last_sync_message || buildSyncSummary(integration);
   }
 
   if (integration.last_sync_result === 'no_change') {
-    return '已確認最新狀態，目前沒有新的重點變化。';
+    return integration.last_sync_message || '已確認最新狀態，目前沒有新的重點變化。';
   }
 
   return '已完成連接，現在可以開始同步資料。';
@@ -207,7 +229,7 @@ export default function SourcesPage() {
       setFeedback(null);
 
       const result = await syncIntegration(integrationId);
-      notifyDataUpdated();
+      notifyDataUpdated({ reason: 'sync', message: result.message });
       await load({ silent: true });
 
       setFeedback({
@@ -216,7 +238,7 @@ export default function SourcesPage() {
           result.message ||
           (result.sync_status === 'no_change'
             ? `${providerDisplay(result.provider_key)} 已完成同步，目前沒有新的重點變化。`
-            : `${providerDisplay(result.provider_key)} 同步完成，已更新 ${result.saved_count} 筆資料。`),
+            : `${providerDisplay(result.provider_key)} 同步完成，本次檢查 ${result.fetched_count || result.saved_count} 筆資料。`),
       });
     } catch (err) {
       setFeedback({

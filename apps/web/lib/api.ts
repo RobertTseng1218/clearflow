@@ -28,34 +28,52 @@ type ConnectionStatus = {
   notice?: string | null;
 };
 
+const DATA_UPDATED_EVENT = 'clearflow:data-updated';
+const DATA_UPDATED_STORAGE_KEY = 'clearflow:lastSyncSignal';
 
-type DataUpdatedDetail = {
-  reason?: 'sync' | 'task' | string;
+export type DataUpdatedDetail = {
+  reason?: 'sync' | 'task' | 'manual' | string;
   message?: string;
+  value?: string;
   [key: string]: unknown;
 };
-
-const DATA_UPDATED_EVENT = 'clearflow:data-updated';
-
-export function notifyDataUpdated(detail?: DataUpdatedDetail) {
-  if (typeof window === 'undefined') return;
-  window.dispatchEvent(new CustomEvent<DataUpdatedDetail>(DATA_UPDATED_EVENT, { detail }));
-}
 
 export function bindDataUpdated(listener: (detail?: DataUpdatedDetail) => void) {
   if (typeof window === 'undefined') {
     return () => {};
   }
 
-  const handler = (event: Event) => {
-    const customEvent = event as CustomEvent<DataUpdatedDetail>;
+  const handleCustom = (event: Event) => {
+    const customEvent = event as CustomEvent<DataUpdatedDetail | undefined>;
     listener(customEvent.detail);
   };
 
-  window.addEventListener(DATA_UPDATED_EVENT, handler as EventListener);
-  return () => {
-    window.removeEventListener(DATA_UPDATED_EVENT, handler as EventListener);
+  const handleStorage = (event: StorageEvent) => {
+    if (event.key !== DATA_UPDATED_STORAGE_KEY) return;
+    listener({ reason: 'sync', value: event.newValue ?? undefined });
   };
+
+  window.addEventListener(DATA_UPDATED_EVENT, handleCustom as EventListener);
+  window.addEventListener('storage', handleStorage);
+
+  return () => {
+    window.removeEventListener(DATA_UPDATED_EVENT, handleCustom as EventListener);
+    window.removeEventListener('storage', handleStorage);
+  };
+}
+
+export function notifyDataUpdated(detail?: DataUpdatedDetail) {
+  if (typeof window === 'undefined') return;
+
+  const payload = detail || {};
+
+  try {
+    window.localStorage.setItem(DATA_UPDATED_STORAGE_KEY, String(Date.now()));
+  } catch {
+    // ignore localStorage availability issues
+  }
+
+  window.dispatchEvent(new CustomEvent<DataUpdatedDetail>(DATA_UPDATED_EVENT, { detail: payload }));
 }
 
 function mapErrorMessage(code?: string, fallback?: string): string {
@@ -126,83 +144,11 @@ export async function deleteIntegration(integrationId: string) { return request<
 
 export async function getDashboard() {
   return request<{
-    today_highlights: Array<{
-      title: string;
-      description?: string;
-      priority_score?: number;
-      related_type?: string;
-      related_id?: string;
-      source_type?: string;
-      source_label?: string;
-      display_label?: string;
-      due_at?: string | null;
-      task_kind?: string;
-      status?: string;
-      priority?: string;
-    }>;
-    daily_summary_preview?: {
-      summary_id?: string;
-      summary_date?: string;
-      summary_text_preview?: string;
-      source_breakdown?: Record<string, number>;
-      signal_breakdown?: Record<string, number>;
-    } | null;
-    email_highlights?: Array<{
-      title: string;
-      description?: string;
-      priority_score?: number;
-      related_type?: string;
-      related_id?: string;
-      source_type?: string;
-      source_label?: string;
-      display_label?: string;
-    }>;
-    event_highlights?: Array<{
-      title: string;
-      description?: string;
-      priority_score?: number;
-      related_type?: string;
-      related_id?: string;
-      source_type?: string;
-      source_label?: string;
-      display_label?: string;
-    }>;
-    task_preview?: {
-      open_count?: number;
-      due_soon_count?: number;
-      items?: Array<{
-        id: string;
-        title: string;
-        description?: string;
-        status: string;
-        priority: string;
-        due_at?: string | null;
-        source?: string | null;
-        source_label?: string;
-        source_type?: string;
-        task_kind?: string;
-        display_hint?: string | null;
-      }>;
-    } | null;
-    reminder_preview?: {
-      items?: Array<{
-        title: string;
-        message?: string;
-        source_type?: string;
-        source_label?: string;
-        trigger_at?: string | null;
-      }>;
-    } | null;
-    recent_activity_preview?: {
-      items?: Array<{ id?: string; event_type?: string; message: string; created_at: string }>;
-    } | null;
-    source_overview?: {
-      email_count?: number;
-      calendar_count?: number;
-      active_sources?: number;
-      today_data_sources_count?: number;
-      today_data_source_labels?: string[];
-    } | null;
+    today_highlights: Array<{ title: string; description?: string; priority_score?: number; related_type?: string; related_id?: string }>;
+    daily_summary_preview?: { summary_id?: string; summary_date?: string; summary_text_preview?: string } | null;
+    task_preview?: { open_count?: number; due_soon_count?: number; items?: Array<{ id: string; title: string; description?: string; status: string; priority: string; due_at?: string | null; source?: string | null }> } | null;
+    reminder_preview?: { items?: Array<{ title: string; message?: string }> } | null;
+    recent_activity_preview?: { items?: Array<{ message: string; created_at: string }> } | null;
     usage_preview?: { monthly_ai_usage: number; monthly_ai_quota: number };
     connection_status?: ConnectionStatus;
   }>(`${API_PREFIX}/dashboard`);
@@ -226,11 +172,34 @@ export async function getSummary(summaryId: string) {
   }>(`${API_PREFIX}/summaries/${summaryId}`);
 }
 
-export async function getTasks() {
+export async function getTasks(params?: { status?: string; priority?: string; page?: number; limit?: number }) {
+  const query = new URLSearchParams();
+  if (params?.status) query.set('status', params.status);
+  if (params?.priority) query.set('priority', params.priority);
+  if (params?.page) query.set('page', String(params.page));
+  if (params?.limit) query.set('limit', String(params.limit));
+
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+
   return request<{
-    items: Array<{ id: string; title: string; description?: string; status: string; priority: string; due_at?: string | null; source?: string | null; created_by_type?: string }>;
+    items: Array<{
+      id: string;
+      title: string;
+      description?: string;
+      status: string;
+      priority: string;
+      due_at?: string | null;
+      source?: string | null;
+      source_type?: string | null;
+      source_label?: string | null;
+      task_kind?: string | null;
+      email_signal?: string | null;
+      status_display?: string | null;
+      priority_display?: string | null;
+      created_by_type?: string;
+    }>;
     connection_status?: ConnectionStatus;
-  }>(`${API_PREFIX}/tasks`);
+  }>(`${API_PREFIX}/tasks${suffix}`);
 }
 
 export async function getTask(taskId: string) { return request<any>(`${API_PREFIX}/tasks/${taskId}`); }
