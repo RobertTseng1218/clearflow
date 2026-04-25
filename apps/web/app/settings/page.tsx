@@ -17,6 +17,19 @@ function providerLabel(providerKey: string) {
   }
 }
 
+function integrationStatusLabel(status?: string | null) {
+  switch (status) {
+    case 'connected':
+      return '已連接';
+    case 'disconnected':
+      return '已移除';
+    case 'error':
+      return '連接異常';
+    default:
+      return status || '未知狀態';
+  }
+}
+
 export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -124,13 +137,16 @@ export default function SettingsPage() {
 
           <SectionCard title="已連接來源">
             <div className="space-y-3 text-sm text-slate-700">
+              <div className="text-xs leading-6 text-slate-500">
+                這裡顯示的是目前帳號已授權連接的來源；總覽頁的「今日資料來源」則代表今天實際納入整理的資料。
+              </div>
               {settings.integrations.length === 0 ? (
                 <div>尚未連接任何來源</div>
               ) : (
                 settings.integrations.map((integration: any) => (
                   <div key={integration.id} className="rounded-xl border border-slate-200 p-3">
                     <div className="font-medium text-slate-900">{providerLabel(integration.provider_key)}</div>
-                    <div className="mt-1 text-xs text-slate-500">狀態：{integration.status}</div>
+                    <div className="mt-1 text-xs text-slate-500">狀態：{integrationStatusLabel(integration.status)}</div>
                   </div>
                 ))
               )}

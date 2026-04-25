@@ -418,11 +418,11 @@ export default function DashboardPage() {
               note="只保留較像真正待處理的項目"
             />
             <StatCard
-              title="來源概況"
+              title="今日資料來源"
               value={`${dashboard.source_overview?.active_sources ?? integrations.length}`}
               note={
                 sourceBreakdownText(dashboard.daily_summary_preview?.source_breakdown) ||
-                '目前以 Gmail / Calendar 為主'
+                '今天納入總覽與摘要的資料'
               }
             />
           </div>
@@ -452,7 +452,7 @@ export default function DashboardPage() {
 
                   {sourceBreakdownText(dashboard.daily_summary_preview?.source_breakdown) ? (
                     <div className="text-xs font-medium text-slate-500">
-                      {sourceBreakdownText(dashboard.daily_summary_preview?.source_breakdown)}
+                      納入來源：{sourceBreakdownText(dashboard.daily_summary_preview?.source_breakdown)}
                     </div>
                   ) : null}
 

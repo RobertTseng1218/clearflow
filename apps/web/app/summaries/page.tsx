@@ -335,7 +335,7 @@ export default function SummariesPage() {
 
                       {breakdownText(summary.source_breakdown) ? (
                         <div className="mt-2 text-xs font-medium text-slate-500">
-                          {breakdownText(summary.source_breakdown)}
+                          納入來源：{breakdownText(summary.source_breakdown)}
                         </div>
                       ) : null}
                     </button>
@@ -364,7 +364,7 @@ export default function SummariesPage() {
                       <div className="flex flex-wrap items-center gap-2">
                         {breakdownText(detail.source_breakdown) ? (
                           <div className="text-xs font-medium text-slate-500">
-                            {breakdownText(detail.source_breakdown)}
+                            納入來源：{breakdownText(detail.source_breakdown)}
                           </div>
                         ) : null}
 
