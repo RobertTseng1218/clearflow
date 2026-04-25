@@ -86,12 +86,58 @@ function breakdownText(sourceBreakdown?: Record<string, number>) {
   return parts.length ? parts.join('｜') : null;
 }
 
-function filteredItemsPreview(items?: Array<any>) {
-  if (!items || items.length === 0) return null;
-  return items
-    .slice(0, 4)
-    .map((item) => `${item.display_label || '已壓低'}：${item.title}`)
-    .join('｜');
+const SUPPRESSED_PREVIEW_LIMIT = 3;
+
+function suppressedItems(items?: Array<any>) {
+  return (items || []).filter((item) => item?.title || item?.description);
+}
+
+function suppressedTotalCount(items?: Array<any>, counts?: Record<string, number>) {
+  const total = counts?.suppressed_total;
+  if (typeof total === 'number' && Number.isFinite(total) && total >= 0) {
+    return total;
+  }
+  return suppressedItems(items).length;
+}
+
+function SuppressedItemsPreview({
+  items,
+  counts,
+}: {
+  items?: Array<any>;
+  counts?: Record<string, number>;
+}) {
+  const normalizedItems = suppressedItems(items);
+  if (normalizedItems.length === 0) return null;
+
+  const visibleItems = normalizedItems.slice(0, SUPPRESSED_PREVIEW_LIMIT);
+  const totalCount = suppressedTotalCount(items, counts);
+  const hiddenCount = Math.max(totalCount - visibleItems.length, 0);
+
+  return (
+    <div className="mt-3 rounded-xl border border-dashed border-slate-200 bg-slate-50 px-3 py-3 text-xs leading-6 text-slate-500">
+      <div className="font-semibold text-slate-600">已壓低內容</div>
+      <ul className="mt-2 space-y-1.5">
+        {visibleItems.map((item, idx) => (
+          <li
+            key={item.dedupe_identity || item.thread_id || `${item.title || item.description}-${idx}`}
+            className="flex gap-2"
+          >
+            <span className="mt-[9px] h-1.5 w-1.5 flex-none rounded-full bg-slate-300" />
+            <span>
+              <span className="font-medium text-slate-600">
+                {item.display_label || '已壓低'}：
+              </span>
+              {truncateText(item.title || item.description, 64)}
+            </span>
+          </li>
+        ))}
+      </ul>
+      {hiddenCount > 0 ? (
+        <div className="mt-2 text-slate-400">另有 {hiddenCount} 筆已壓低內容。</div>
+      ) : null}
+    </div>
+  );
 }
 
 function signalBreakdownText(signalBreakdown?: Record<string, number>) {
@@ -334,12 +380,10 @@ export default function SummariesPage() {
                       {detail.summary_text || '—'}
                     </p>
 
-                    {filteredItemsPreview(detail.filtered_items) ? (
-                      <div className="mt-3 rounded-xl border border-dashed border-slate-200 bg-slate-50 px-3 py-3 text-xs leading-6 text-slate-500">
-                        <div className="font-semibold text-slate-600">已壓低內容</div>
-                        <div className="mt-1">{filteredItemsPreview(detail.filtered_items)}</div>
-                      </div>
-                    ) : null}
+                    <SuppressedItemsPreview
+                      items={detail.filtered_items}
+                      counts={detail.filtered_counts}
+                    />
                   </div>
 
                   <div className="grid gap-6 xl:grid-cols-2">

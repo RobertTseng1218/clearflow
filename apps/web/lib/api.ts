@@ -28,6 +28,25 @@ type ConnectionStatus = {
   notice?: string | null;
 };
 
+type SourceBreakdown = Record<string, number>;
+
+type SuppressedItem = {
+  title?: string | null;
+  description?: string | null;
+  source_type?: string | null;
+  source_label?: string | null;
+  display_label?: string | null;
+  source_category?: string | null;
+  thread_id?: string | null;
+  dedupe_identity?: string | null;
+};
+
+type SuppressedCounts = {
+  notification_email?: number;
+  marketing_email?: number;
+  suppressed_total?: number;
+};
+
 const DATA_UPDATED_EVENT = 'clearflow:data-updated';
 const DATA_UPDATED_STORAGE_KEY = 'clearflow:lastSyncSignal';
 
@@ -145,7 +164,15 @@ export async function deleteIntegration(integrationId: string) { return request<
 export async function getDashboard() {
   return request<{
     today_highlights: Array<{ title: string; description?: string; priority_score?: number; related_type?: string; related_id?: string }>;
-    daily_summary_preview?: { summary_id?: string; summary_date?: string; summary_text_preview?: string } | null;
+    daily_summary_preview?: {
+      summary_id?: string;
+      summary_date?: string;
+      summary_text_preview?: string;
+      source_breakdown?: SourceBreakdown;
+      signal_breakdown?: SourceBreakdown;
+      filtered_counts?: SuppressedCounts;
+      filtered_items?: SuppressedItem[];
+    } | null;
     task_preview?: { open_count?: number; due_soon_count?: number; items?: Array<{ id: string; title: string; description?: string; status: string; priority: string; due_at?: string | null; source?: string | null }> } | null;
     reminder_preview?: { items?: Array<{ title: string; message?: string }> } | null;
     recent_activity_preview?: { items?: Array<{ message: string; created_at: string }> } | null;
@@ -167,6 +194,10 @@ export async function getSummary(summaryId: string) {
     summary_type: string;
     summary_date: string;
     summary_text: string;
+    source_breakdown?: SourceBreakdown;
+    signal_breakdown?: SourceBreakdown;
+    filtered_counts?: SuppressedCounts;
+    filtered_items?: SuppressedItem[];
     items: Array<{ id: string; item_type: string; title: string; description?: string; priority_score?: number; related_source_item_id?: string | null; meta?: Record<string, unknown> }>;
     connection_status?: ConnectionStatus;
   }>(`${API_PREFIX}/summaries/${summaryId}`);
