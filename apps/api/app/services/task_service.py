@@ -451,7 +451,7 @@ def extract_tasks_for_user(db: Session, user_id: str) -> list[Task]:
         owner_id=user_id,
         event_type=ActivityEvent.TASK_CREATED,
         event_source="task_extractor",
-        message=f"Task extraction completed with {len(created_or_updated)} active tasks.",
+        message=f"已完成待辦整理，目前保留 {len(created_or_updated)} 個有效待辦。",
         related_entity_type="task_batch",
         related_entity_id=None,
         meta_json={"task_count": len(created_or_updated)},

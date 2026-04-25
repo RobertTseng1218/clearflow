@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from app.models.activity_log import ActivityLog
 from app.models.source_data import SummaryItem, Task
 from app.services.plan_service import get_usage_payload
-from app.services.activity_log_service import ActivityEvent
+from app.services.activity_log_service import ActivityEvent, format_activity_message
 from app.services.summary_service import generate_daily_summary
 from app.services.task_service import extract_tasks_for_user
 
@@ -324,7 +324,12 @@ def get_dashboard_payload(db: Session, user_id: str) -> dict:
                 {
                     "id": item.id,
                     "event_type": item.event_type,
-                    "message": item.message,
+                    "message": format_activity_message(
+                        event_type=item.event_type,
+                        event_source=item.event_source,
+                        message=item.message,
+                        meta_json=item.meta_json,
+                    ),
                     "created_at": _serialize_dt(item.created_at),
                 }
                 for item in recent_activities

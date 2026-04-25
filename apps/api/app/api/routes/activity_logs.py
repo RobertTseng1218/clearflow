@@ -9,6 +9,7 @@ from app.core.responses import success_response
 from app.core.security import get_current_user
 from app.models.activity_log import ActivityLog
 from app.models.user import User
+from app.services.activity_log_service import format_activity_message
 
 router = APIRouter(prefix="/activity-logs", tags=["activity-logs"])
 
@@ -34,7 +35,12 @@ def list_activity_logs(
                     "id": item.id,
                     "event_type": item.event_type,
                     "event_source": item.event_source,
-                    "message": item.message,
+                    "message": format_activity_message(
+                        event_type=item.event_type,
+                        event_source=item.event_source,
+                        message=item.message,
+                        meta_json=item.meta_json,
+                    ),
                     "related_entity_type": item.related_entity_type,
                     "related_entity_id": item.related_entity_id,
                     "created_at": item.created_at.isoformat(),
