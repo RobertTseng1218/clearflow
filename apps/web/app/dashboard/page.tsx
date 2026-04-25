@@ -288,7 +288,7 @@ function EmptyNote({
   description?: string;
 }) {
   return (
-    <div className="section-empty-note">
+    <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-4">
       <div className="text-sm font-medium text-slate-600">{title}</div>
       {description ? (
         <p className="mt-2 text-sm leading-6 text-slate-500">{description}</p>
@@ -427,21 +427,81 @@ export default function DashboardPage() {
             />
           </div>
 
-          <div className="mt-6 grid gap-6 xl:grid-cols-[1.2fr_1fr]">
-            <SectionCard title="今天先看什麼">
-              <div className="space-y-3 min-h-[180px]">
-                {todayHighlights.length === 0 ? (
-                  <EmptyNote
-                    title="目前沒有需要優先處理的重點。"
-                    description="今天的整理結果已經放在右側摘要與下方待辦，你可以從那裡接著看。"
-                  />
-                ) : (
-                  todayHighlights.map((item: any, idx: number) => (
-                    <HighlightCard key={`${item.related_id || item.id}-${idx}`} item={item} />
-                  ))
-                )}
-              </div>
-            </SectionCard>
+          <div className="mt-6 grid items-start gap-6 xl:grid-cols-[1.08fr_1fr]">
+            <div className="space-y-6">
+              <SectionCard title="今天先看什麼">
+                <div className="space-y-3">
+                  {todayHighlights.length === 0 ? (
+                    <EmptyNote
+                      title="目前沒有需要你優先處理的內容。"
+                      description="通知、促銷與已過資訊會先留在後面，不會打擾你。"
+                    />
+                  ) : (
+                    todayHighlights.map((item: any, idx: number) => (
+                      <HighlightCard key={`${item.related_id || item.id}-${idx}`} item={item} />
+                    ))
+                  )}
+                </div>
+              </SectionCard>
+
+              <SectionCard title="郵件重點">
+                <div className="space-y-3">
+                  {emailHighlights.length === 0 ? (
+                    <EmptyNote
+                      title="目前沒有需要你立刻處理的郵件重點。"
+                      description="今天有同步到郵件，但暫時沒有被判定為需要優先處理的內容。"
+                    />
+                  ) : (
+                    emailHighlights.map((item: any, idx: number) => (
+                      <HighlightCard key={`email-${item.related_id || item.id}-${idx}`} item={item} />
+                    ))
+                  )}
+                </div>
+              </SectionCard>
+
+              <SectionCard title="現在最該處理的待辦">
+                <div className="space-y-3">
+                  {taskPreviewItems.length === 0 ? (
+                    <EmptyNote
+                      title="目前沒有需要你處理的待辦。"
+                      description="如果之後有新的跟進郵件或行程提醒，這裡會先整理給你。"
+                    />
+                  ) : (
+                    taskPreviewItems.map((task: any) => (
+                      <div key={task.id} className="rounded-xl border border-slate-200 p-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="space-y-2">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <h3 className="font-semibold text-slate-900">{task.title}</h3>
+                              {sourceBadge(task.source_type, task.source_label)}
+                              {displayBadge(
+                                task.task_kind === 'calendar_reminder'
+                                  ? '行程提醒'
+                                  : task.task_kind === 'email_followup'
+                                    ? '郵件跟進'
+                                    : undefined
+                              )}
+                            </div>
+
+                            <p className="text-sm text-slate-600">
+                              {truncateText(task.description, 120)}
+                            </p>
+
+                            {task.display_hint ? (
+                              <div className="text-xs text-slate-500">{task.display_hint}</div>
+                            ) : null}
+                          </div>
+                        </div>
+
+                        <div className="mt-3 flex gap-3 text-xs text-slate-500">
+                          <span>到期：{fmtDateTime(task.due_at)}</span>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </SectionCard>
+            </div>
 
             <div className="space-y-6">
               <SectionCard title="今日摘要">
@@ -494,107 +554,45 @@ export default function DashboardPage() {
                   )}
                 </div>
               </SectionCard>
-            </div>
-          </div>
 
-          <div className="mt-6 grid gap-6 xl:grid-cols-2">
-            <SectionCard title="郵件重點">
-              <div className="space-y-3">
-                {emailHighlights.length === 0 ? (
-                  <EmptyNote
-                    title="目前沒有需要你立刻處理的郵件重點。"
-                    description="今天有同步到郵件，但暫時沒有被判定為高優先內容。"
-                  />
-                ) : (
-                  emailHighlights.map((item: any, idx: number) => (
-                    <HighlightCard key={`email-${item.related_id || item.id}-${idx}`} item={item} />
-                  ))
-                )}
-              </div>
-            </SectionCard>
+              <SectionCard title="行程 / 會議重點">
+                <div className="space-y-3">
+                  {eventHighlights.length === 0 ? (
+                    <EmptyNote
+                      title="今天暫時沒有需要特別留意的行程安排。"
+                      description="未來行程仍會保留在摘要或提醒區，接近時間時再優先顯示。"
+                    />
+                  ) : (
+                    eventHighlights.map((item: any, idx: number) => (
+                      <HighlightCard key={`event-${item.related_id || item.id}-${idx}`} item={item} />
+                    ))
+                  )}
+                </div>
+              </SectionCard>
 
-            <SectionCard title="行程 / 會議重點">
-              <div className="space-y-3">
-                {eventHighlights.length === 0 ? (
-                  <EmptyNote
-                    title="今天暫時沒有需要特別留意的行程安排。"
-                    description="未來行程仍會保留在摘要或提醒區，接近時間時再優先顯示。"
-                  />
-                ) : (
-                  eventHighlights.map((item: any, idx: number) => (
-                    <HighlightCard key={`event-${item.related_id || item.id}-${idx}`} item={item} />
-                  ))
-                )}
-              </div>
-            </SectionCard>
-          </div>
-
-          <div className="mt-6 grid gap-6 xl:grid-cols-2">
-            <SectionCard title="現在最該處理的待辦">
-              <div className="space-y-3">
-                {taskPreviewItems.length === 0 ? (
-                  <EmptyNote
-                    title="目前沒有需要處理的待辦。"
-                    description="如果之後有新的跟進郵件或行程提醒，這裡會先整理給你。"
-                  />
-                ) : (
-                  taskPreviewItems.map((task: any) => (
-                    <div key={task.id} className="rounded-xl border border-slate-200 p-4">
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="space-y-2">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <h3 className="font-semibold text-slate-900">{task.title}</h3>
-                            {sourceBadge(task.source_type, task.source_label)}
-                            {displayBadge(
-                              task.task_kind === 'calendar_reminder'
-                                ? '行程提醒'
-                                : task.task_kind === 'email_followup'
-                                  ? '郵件跟進'
-                                  : undefined
-                            )}
-                          </div>
-
-                          <p className="text-sm text-slate-600">
-                            {truncateText(task.description, 120)}
-                          </p>
-
-                          {task.display_hint ? (
-                            <div className="text-xs text-slate-500">{task.display_hint}</div>
-                          ) : null}
+              <SectionCard title="最近活動">
+                <div className="space-y-3">
+                  {recentActivities.length === 0 ? (
+                    <EmptyNote
+                      title="目前還沒有新的活動紀錄。"
+                      description="當同步、摘要整理或待辦更新完成後，這裡會顯示最新結果。"
+                    />
+                  ) : (
+                    recentActivities.map((activity: any, idx: number) => (
+                      <div
+                        key={`${activity.created_at}-${activity.message}-${idx}`}
+                        className="rounded-xl border border-slate-200 p-4"
+                      >
+                        <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                          {fmtDateTime(activity.created_at)}
                         </div>
+                        <div className="mt-1 text-sm text-slate-700">{activity.message}</div>
                       </div>
-
-                      <div className="mt-3 flex gap-3 text-xs text-slate-500">
-                        <span>到期：{fmtDateTime(task.due_at)}</span>
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-            </SectionCard>
-
-            <SectionCard title="最近活動">
-              <div className="space-y-3">
-                {recentActivities.length === 0 ? (
-                  <EmptyNote
-                    title="目前還沒有新的活動紀錄。"
-                    description="當同步、摘要整理或待辦更新完成後，這裡會顯示最新結果。"
-                  />
-                ) : (
-                  recentActivities.map((activity: any, idx: number) => (
-                    <div
-                      key={`${activity.created_at}-${activity.message}-${idx}`}
-                      className="rounded-xl border border-slate-200 p-4"
-                    >
-                      <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-                        {fmtDateTime(activity.created_at)}
-                      </div>
-                      <div className="mt-1 text-sm text-slate-700">{activity.message}</div>
-                    </div>
-                  ))
-                )}
-              </div>
-            </SectionCard>
+                    ))
+                  )}
+                </div>
+              </SectionCard>
+            </div>
           </div>
         </>
       ) : null}
